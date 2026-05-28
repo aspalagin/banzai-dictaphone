@@ -1,0 +1,39 @@
+# Secrets and local config
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.jks
+*.keystore
+local.properties
+tunnel.conf
+
+# Runtime data
+sessions/
+server/sessions/
+*.pcm
+*.wav
+*.ogg
+*.jsonl
+transcript*.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Android build outputs
+android/build/
+android/*.apk
+android/*.idsig
+*.apk
+*.aab
+*.idsig
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/

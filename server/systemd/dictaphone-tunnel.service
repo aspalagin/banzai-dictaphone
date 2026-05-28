@@ -1,0 +1,14 @@
+[Unit]
+Description=Banzai Dictaphone Cloudflare quick tunnel
+After=network-online.target dictaphone.service
+Wants=network-online.target dictaphone.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/banzai-dictaphone/server
+ExecStart=/opt/banzai-dictaphone/server/dictaphone_tunnel.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

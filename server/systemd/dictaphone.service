@@ -1,0 +1,17 @@
+[Unit]
+Description=Banzai Dictaphone WebSocket server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/banzai-dictaphone/server
+EnvironmentFile=-/etc/banzai-dictaphone.env
+Environment=DICTAPHONE_HOST=127.0.0.1
+Environment=DICTAPHONE_PORT=8097
+ExecStart=/usr/bin/python3 /opt/banzai-dictaphone/server/server.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
