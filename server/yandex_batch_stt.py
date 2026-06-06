@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import shutil
 import socket
 import subprocess
@@ -22,13 +23,15 @@ from config import (
     YANDEX_STT_LANGUAGE,
     YANDEX_STT_MODEL,
     YANDEX_STT_POLL_INTERVAL_SECONDS,
-    YANDEX_STT_SAMPLE_RATE,
     YANDEX_STT_TIMEOUT_SECONDS,
 )
 
 EventWriter = Callable[[dict[str, Any]], None]
 
 _YANDEX_NETWORK_LOCK = threading.Lock()
+_STT_START_URL = "https://stt.api.cloud.yandex.net/stt/v3/recognizeFileAsync"
+_STT_RESULT_URL = "https://stt.api.cloud.yandex.net/stt/v3/getRecognition"
+_OPS_URL = "https://operation.api.cloud.yandex.net/operations"
 
 
 def _is_yandex_host(host: object) -> bool:
@@ -58,7 +61,7 @@ def _force_yandex_ipv4_dns():
 
 
 class YandexBatchTranscriber:
-    """Runs Yandex SpeechKit longRunningRecognize after audio.pcm is closed."""
+    """Runs Yandex SpeechKit v3 after audio.pcm is closed."""
 
     def __init__(
         self,
@@ -79,16 +82,16 @@ class YandexBatchTranscriber:
     async def start(self) -> None:
         self._require_config()
         if not shutil.which("ffmpeg"):
-            raise RuntimeError("ffmpeg is required for Yandex STT resampling")
+            raise RuntimeError("ffmpeg is required for Yandex STT audio encoding")
         self.write_event(
             {
                 "event": "stt_started",
                 "provider": "yandex",
-                "mode": "batch_after_stop",
+                "mode": "batch_after_stop_v3",
                 "model": YANDEX_STT_MODEL,
                 "language": YANDEX_STT_LANGUAGE,
                 "sample_rate": self.sample_rate,
-                "target_sample_rate": YANDEX_STT_SAMPLE_RATE,
+                "container_format": "OGG_OPUS",
             }
         )
 
@@ -123,7 +126,7 @@ class YandexBatchTranscriber:
                 "operation_id": result["operation_id"],
                 "chunks": result["chunks"],
                 "text_chars": len(text),
-                "resampled_path": result["resampled_path"],
+                "processed_path": result["processed_path"],
             }
         )
         if text:
@@ -144,7 +147,7 @@ class YandexBatchTranscriber:
                 "operation_id": "",
                 "chunks": 0,
                 "text": "",
-                "resampled_path": "",
+                "processed_path": "",
             }
 
         api_key = env_or_file("YC_API_KEY")
@@ -152,7 +155,7 @@ class YandexBatchTranscriber:
         s3_key_id = env_or_file("YC_S3_KEY_ID")
         s3_secret_key = env_or_file("YC_S3_SECRET_KEY")
 
-        resampled_path = self.audio_path.with_name(f"audio.yandex.{YANDEX_STT_SAMPLE_RATE}.pcm")
+        processed_path = self.audio_path.with_name("audio.yandex.v3.ogg")
         subprocess.run(
             [
                 "ffmpeg",
@@ -168,20 +171,20 @@ class YandexBatchTranscriber:
                 "1",
                 "-i",
                 str(self.audio_path),
-                "-f",
-                "s16le",
+                "-acodec",
+                "libopus",
                 "-ar",
-                str(YANDEX_STT_SAMPLE_RATE),
+                "48000",
                 "-ac",
                 "1",
-                str(resampled_path),
+                str(processed_path),
             ],
             check=True,
             timeout=120,
         )
 
         with _YANDEX_NETWORK_LOCK, _force_yandex_ipv4_dns():
-            object_key = f"dictaphone/sessions/{self.session_id}/{int(time.time())}.pcm"
+            object_key = f"dictaphone/sessions/{self.session_id}/{int(time.time())}.ogg"
             s3 = boto3.client(
                 "s3",
                 endpoint_url="https://storage.yandexcloud.net",
@@ -195,7 +198,7 @@ class YandexBatchTranscriber:
                 ),
                 region_name="ru-central1",
             )
-            s3.upload_file(str(resampled_path), bucket, object_key)
+            s3.upload_file(str(processed_path), bucket, object_key)
             uri = s3.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": bucket, "Key": object_key},
@@ -205,19 +208,29 @@ class YandexBatchTranscriber:
             operation_id = ""
             try:
                 response = requests.post(
-                    "https://transcribe.api.cloud.yandex.net/speech/stt/v2/longRunningRecognize",
+                    _STT_START_URL,
                     headers={"Authorization": f"Api-Key {api_key}"},
                     json={
-                        "config": {
-                            "specification": {
-                                "languageCode": YANDEX_STT_LANGUAGE,
-                                "model": YANDEX_STT_MODEL,
-                                "audioEncoding": "LINEAR16_PCM",
-                                "sampleRateHertz": YANDEX_STT_SAMPLE_RATE,
-                                "audioChannelCount": 1,
-                            }
+                        "uri": uri,
+                        "recognitionModel": {
+                            "model": YANDEX_STT_MODEL,
+                            "audioFormat": {
+                                "containerAudio": {
+                                    "containerAudioType": "OGG_OPUS",
+                                }
+                            },
+                            "textNormalization": {
+                                "textNormalization": "TEXT_NORMALIZATION_ENABLED",
+                                "profanityFilter": False,
+                                "literatureText": True,
+                                "phoneFormattingMode": "PHONE_FORMATTING_MODE_DISABLED",
+                            },
+                            "languageRestriction": {
+                                "restrictionType": "WHITELIST",
+                                "languageCode": [YANDEX_STT_LANGUAGE],
+                            },
+                            "audioProcessingType": "FULL_DATA",
                         },
-                        "audio": {"uri": uri},
                     },
                     timeout=(10, 30),
                 )
@@ -233,7 +246,7 @@ class YandexBatchTranscriber:
                 while time.monotonic() < deadline:
                     time.sleep(YANDEX_STT_POLL_INTERVAL_SECONDS)
                     poll = requests.get(
-                        f"https://operation.api.cloud.yandex.net/operations/{operation_id}",
+                        f"{_OPS_URL}/{operation_id}",
                         headers={"Authorization": f"Api-Key {api_key}"},
                         timeout=(10, 30),
                     )
@@ -248,20 +261,21 @@ class YandexBatchTranscriber:
                 if operation.get("error"):
                     raise RuntimeError(f"Yandex STT failed: {operation['error']}")
 
-                chunks = operation.get("response", {}).get("chunks") or []
-                lines: list[str] = []
-                for chunk in chunks:
-                    alternatives = chunk.get("alternatives") or []
-                    if not alternatives:
-                        continue
-                    text = (alternatives[0].get("text") or "").strip()
-                    if text:
-                        lines.append(text)
+                result = requests.get(
+                    _STT_RESULT_URL,
+                    params={"operation_id": operation_id},
+                    headers={"Authorization": f"Api-Key {api_key}"},
+                    timeout=(10, 60),
+                )
+                if result.status_code != 200:
+                    raise RuntimeError(f"Yandex STT result failed {result.status_code}: {result.text[:500]}")
+
+                lines = _extract_v3_lines(result.text)
                 return {
                     "operation_id": operation_id,
-                    "chunks": len(chunks),
+                    "chunks": len(lines),
                     "text": "\n".join(lines),
-                    "resampled_path": str(resampled_path),
+                    "processed_path": str(processed_path),
                 }
             finally:
                 if YANDEX_STT_DELETE_OBJECT and object_key:
@@ -278,3 +292,41 @@ class YandexBatchTranscriber:
         ]
         if missing:
             raise RuntimeError("Missing Yandex STT config: " + ", ".join(missing))
+
+
+def _extract_v3_lines(ndjson_text: str) -> list[str]:
+    refined: list[str] = []
+    fallback: list[str] = []
+    for line in ndjson_text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        result = obj.get("result") or {}
+        refinement = result.get("finalRefinement") or {}
+        normalized = refinement.get("normalizedText") or {}
+        alternatives = normalized.get("alternatives") or []
+        if alternatives:
+            text = (alternatives[0].get("text") or "").strip()
+            if text:
+                refined.append(text)
+            continue
+
+        final = result.get("final") or {}
+        alternatives = final.get("alternatives") or []
+        if alternatives:
+            text = (alternatives[0].get("text") or "").strip()
+            if text:
+                fallback.append(text)
+
+    lines = refined or fallback
+    deduped: list[str] = []
+    previous = ""
+    for text in lines:
+        if text != previous:
+            deduped.append(text)
+        previous = text
+    return deduped
