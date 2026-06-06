@@ -22,6 +22,7 @@ from config import (
     YANDEX_REALTIME_URL,
     YANDEX_REALTIME_VOICE,
 )
+from transcript_merge import merge_transcript_line
 
 log = logging.getLogger("dictaphone.yandex_realtime")
 EventWriter = Callable[[dict[str, Any]], None]
@@ -272,33 +273,13 @@ class YandexRealtimeTranscriber:
         log.debug("Unhandled Yandex Realtime event: %s", event_type)
 
     def _store_transcript(self, transcript: str) -> str:
-        if not self._full_transcript:
-            self._full_transcript.append(transcript)
+        action = merge_transcript_line(self._full_transcript, transcript)
+        if action not in {"empty", "duplicate", "covered_by_previous"}:
             self._rewrite_transcript_file()
-            return "append"
-
-        previous = self._full_transcript[-1]
-        prev_norm = _normalize_text(previous)
-        new_norm = _normalize_text(transcript)
-        if not new_norm or new_norm == prev_norm:
-            return "duplicate"
-        if new_norm.startswith(prev_norm) or (prev_norm in new_norm and len(new_norm) > len(prev_norm)):
-            self._full_transcript[-1] = transcript
-            self._rewrite_transcript_file()
-            return "replace_previous"
-        if new_norm in prev_norm:
-            return "covered_by_previous"
-
-        self._full_transcript.append(transcript)
-        self._rewrite_transcript_file()
-        return "append"
+        return action
 
     def _rewrite_transcript_file(self) -> None:
         text = "\n".join(line for line in self._full_transcript if line.strip())
         with self.transcript_path.open("w", encoding="utf-8") as fp:
             if text:
                 fp.write(text.rstrip() + "\n")
-
-
-def _normalize_text(text: str) -> str:
-    return " ".join(text.strip().lower().split())

@@ -20,6 +20,7 @@ from typing import Any
 import aiohttp
 
 from config import TELEGRAM_CHAT_ID, env_or_file
+from transcript_merge import merge_transcript_line
 
 log = logging.getLogger("dictaphone.telegram")
 
@@ -44,6 +45,9 @@ class TelegramSink:
         self._current_text: str = ""
         self._pending_deltas: list[str] = []
         self._delta_item_ids: set[str] = set()
+        self._completed_lines: list[str] = []
+        self._frozen_completed_chars = 0
+        self._dirty = False
         self._flush_task: asyncio.Task | None = None
         self._stopped = False
         self._header: str = ""
@@ -73,7 +77,12 @@ class TelegramSink:
             self._delta_item_ids.add(item_id)
         self._pending_deltas.append(delta)
 
-    async def on_transcript_completed(self, transcript: str, item_id: str | None = None) -> None:
+    async def on_transcript_completed(
+        self,
+        transcript: str,
+        item_id: str | None = None,
+        storage_action: str | None = None,
+    ) -> None:
         """Вызывается при transcript_completed (финальный текст utterance)."""
         if not self._http or self._stopped:
             return
@@ -83,7 +92,12 @@ class TelegramSink:
             return
         clean = transcript.strip()
         if clean:
-            self._pending_deltas.append(clean + "\n")
+            action = merge_transcript_line(self._completed_lines, clean)
+            if action in {"empty", "duplicate", "covered_by_previous"}:
+                return
+            self._refresh_current_completed_text()
+            self._pending_deltas.clear()
+            self._dirty = True
 
     async def stop(
         self,
@@ -132,19 +146,23 @@ class TelegramSink:
 
     async def _flush_now(self) -> None:
         """Применить pending_deltas к текущему сообщению."""
-        if not self._pending_deltas or not self._http:
+        if (not self._pending_deltas and not self._dirty) or not self._http:
             return
 
-        new_text = "".join(self._pending_deltas)
-        self._pending_deltas.clear()
+        if self._pending_deltas:
+            new_text = "".join(self._pending_deltas)
+            self._pending_deltas.clear()
 
-        self._current_text += new_text
+            self._current_text += new_text
+        self._dirty = False
 
         # Проверяем лимит длины
         if len(self._current_text) > MAX_MESSAGE_CHARS:
             # Текущее сообщение оставляем как есть, начинаем новое
             overflow = self._current_text[MAX_MESSAGE_CHARS:]
             self._current_text = self._current_text[:MAX_MESSAGE_CHARS]
+            if self._completed_lines:
+                self._frozen_completed_chars += MAX_MESSAGE_CHARS
 
             # Обновляем текущее
             await self._edit_current()
@@ -156,6 +174,13 @@ class TelegramSink:
                 self._current_message_id = msg.get("message_id")
         else:
             await self._edit_current()
+
+    def _completed_text(self) -> str:
+        text = "\n".join(line for line in self._completed_lines if line.strip())
+        return f"{text}\n" if text else ""
+
+    def _refresh_current_completed_text(self) -> None:
+        self._current_text = self._completed_text()[self._frozen_completed_chars:]
 
     async def _edit_current(self) -> None:
         """Редактировать текущее сообщение."""

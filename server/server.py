@@ -273,6 +273,7 @@ async def _start_session_outputs(
                         tg_sink.on_transcript_completed(
                             event.get("transcript", ""),
                             item_id=event.get("item_id"),
+                            storage_action=event.get("storage_action"),
                         )
                     )
 
@@ -390,6 +391,7 @@ async def stream_ws(request: web.Request) -> web.WebSocketResponse:
                                         tg_sink.on_transcript_completed(
                                             event.get("transcript", ""),
                                             item_id=event.get("item_id"),
+                                            storage_action=event.get("storage_action"),
                                         )
                                     )
 
