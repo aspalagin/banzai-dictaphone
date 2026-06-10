@@ -45,7 +45,7 @@ public final class SettingsPanelView extends LinearLayout {
         setPadding(pad, dp(18), pad, dp(18));
         setBackgroundColor(ThemeColors.BG);
 
-        addView(buildHeader());
+        addView(buildHeader(), headerLayoutParams());
         addView(sectionLabel("СЕРВЕР"));
         addView(fieldLabel("URL сервера"));
 
@@ -158,9 +158,6 @@ public final class SettingsPanelView extends LinearLayout {
         LinearLayout header = new LinearLayout(getContext());
         header.setOrientation(HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        LayoutParams headerLp = new LayoutParams(LayoutParams.MATCH_PARENT, dp(54));
-        headerLp.bottomMargin = dp(18);
-        addView(header, headerLp);
 
         TextView title = new TextView(getContext());
         title.setText("Настройки");
@@ -184,6 +181,12 @@ public final class SettingsPanelView extends LinearLayout {
         });
         header.addView(close, new LayoutParams(dp(44), dp(44)));
         return header;
+    }
+
+    private LayoutParams headerLayoutParams() {
+        LayoutParams headerLp = new LayoutParams(LayoutParams.MATCH_PARENT, dp(54));
+        headerLp.bottomMargin = dp(18);
+        return headerLp;
     }
 
     private TextView sectionLabel(String text) {

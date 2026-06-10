@@ -51,7 +51,8 @@ public class MainActivity extends Activity {
             m.setPadding(dp(16), dp(16), dp(16), dp(16));
             m.setBackgroundColor(ThemeColors.BG);
             TextView tv = new TextView(this);
-            tv.setText("Банзай Диктофон\nБезопасный режим: " + Theme.shorten(t.getClass().getSimpleName(), 28));
+            String msg = t.getMessage() == null ? "" : "\n" + Theme.shorten(t.getMessage(), 96);
+            tv.setText("Банзай Диктофон\nБезопасный режим: " + Theme.shorten(t.getClass().getSimpleName(), 28) + msg);
             tv.setTextSize(20);
             tv.setTextColor(ThemeColors.WARN);
             m.addView(tv);
