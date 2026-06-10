@@ -27,7 +27,12 @@ public final class PreferencesManager {
     }
 
     public String getToken() {
-        return prefs.getString(Defaults.KEY_TOKEN, Defaults.DEFAULT_TOKEN);
+        String value = prefs.getString(Defaults.KEY_TOKEN, Defaults.DEFAULT_TOKEN);
+        if ((value == null || value.trim().isEmpty()) && !Defaults.DEFAULT_TOKEN.isEmpty()) {
+            value = Defaults.DEFAULT_TOKEN;
+            prefs.edit().putString(Defaults.KEY_TOKEN, value).apply();
+        }
+        return value;
     }
 
     public void setToken(String token) {
