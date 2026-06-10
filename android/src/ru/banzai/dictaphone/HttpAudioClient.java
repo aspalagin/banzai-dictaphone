@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit;
  * Отдельный поток отправки шлёт POST /v1/http/audio/{session_id}.
  */
 final class HttpAudioClient {
-    static final String VERSION = "v31-telegram-only";
+    public static final String VERSION = "v31-telegram-only";
 
     interface Listener {
         void onStatus(String status);
